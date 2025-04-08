@@ -1,0 +1,3 @@
+@echo off
+echo Просмотр логов микросервиса...
+docker-compose logs --tail=100 -f 
