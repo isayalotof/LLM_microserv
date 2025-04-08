@@ -3,8 +3,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import traceback
+import time
 
 from app.services.assistant import assistant_service
+from app.utils.auth import token_manager
 
 # Создаем роутер
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
@@ -154,4 +156,43 @@ async def search_info_get(
         )
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Ошибка поиска информации: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Ошибка поиска информации: {str(e)}")
+
+# Эндпоинт для обновления токена доступа
+@router.post("/refresh-token")
+async def refresh_auth_token():
+    """
+    Принудительно обновляет токен доступа к GigaChat API.
+    
+    Returns:
+        Статус обновления токена
+    """
+    try:
+        # Обновляем токен
+        await token_manager.refresh_token()
+        return {"status": "success", "message": "Токен успешно обновлен"}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка обновления токена: {str(e)}")
+
+# Эндпоинт для проверки работоспособности сервиса
+@router.get("/health")
+async def health_check():
+    """
+    Проверяет работоспособность сервиса и статус токена.
+    
+    Returns:
+        Статус сервиса и токена
+    """
+    try:
+        # Проверяем, есть ли токен и не истек ли он
+        token_status = "active" if token_manager.access_token and token_manager.token_expires_at > time.time() else "expired"
+        
+        return {
+            "status": "ok",
+            "token_status": token_status,
+            "expires_in": int(token_manager.token_expires_at - time.time()) if token_manager.token_expires_at else None
+        }
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка проверки состояния: {str(e)}") 

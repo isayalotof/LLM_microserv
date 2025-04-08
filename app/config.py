@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
+from typing import Optional
 
 # Загрузка переменных окружения из файла .env
 load_dotenv()
@@ -13,6 +14,9 @@ class GigaChatConfig(BaseModel):
     scope: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
     api_base_url: str = "https://gigachat.devices.sberbank.ru/api/v1"
     auth_url: str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+    model: str = os.getenv("GIGACHAT_MODEL", "GigaChat")
+    temperature: float = float(os.getenv("GIGACHAT_TEMPERATURE", "0.7"))
+    max_tokens: int = int(os.getenv("GIGACHAT_MAX_TOKENS", "1500"))
 
 class AssistantConfig(BaseModel):
     """Конфигурация для ассистента"""

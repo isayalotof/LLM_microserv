@@ -1,9 +1,13 @@
 import httpx
 from typing import Dict, Any, Optional, List
 import json
+import logging
 
 from app.config import gigachat_config
 from app.utils.auth import token_manager
+
+# Настройка логирования
+logger = logging.getLogger("gigachat")
 
 class GigaChatService:
     """Сервис для взаимодействия с GigaChat API"""
@@ -49,47 +53,66 @@ class GigaChatService:
         """
         Отправляет запрос к GigaChat API и возвращает ответ
         """
-        # Получаем токен авторизации
-        auth_token = await token_manager.get_token()
+        max_attempts = 2  # Максимальное количество попыток с обновлением токена
+        attempt = 0
         
-        # Формируем запрос
-        request_data = {
-            "model": "GigaChat",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
+        while attempt < max_attempts:
+            attempt += 1
+            try:
+                # Получаем токен авторизации
+                auth_token = await token_manager.get_token()
+                logger.info(f"Отправка запроса к GigaChat API (попытка {attempt}/{max_attempts})")
+                
+                # Формируем запрос
+                request_data = {
+                    "model": gigachat_config.model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    "temperature": gigachat_config.temperature,
+                    "max_tokens": gigachat_config.max_tokens
                 }
-            ],
-            "temperature": 0.7,
-            "max_tokens": 1500
-        }
-        
-        try:
-            # Отправляем запрос к API
-            async with httpx.AsyncClient(verify=False, timeout=60.0) as client:
-                response = await client.post(
-                    f"{gigachat_config.api_base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {auth_token}",
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    },
-                    json=request_data
-                )
                 
-                response.raise_for_status()
-                response_data = response.json()
-                
-                # Извлекаем текст ответа
-                if response_data.get("choices") and len(response_data["choices"]) > 0:
-                    message = response_data["choices"][0].get("message", {})
-                    return message.get("content", "").strip()
+                # Отправляем запрос к API
+                async with httpx.AsyncClient(verify=False, timeout=60.0) as client:
+                    response = await client.post(
+                        f"{gigachat_config.api_base_url}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {auth_token}",
+                            "Content-Type": "application/json",
+                            "Accept": "application/json"
+                        },
+                        json=request_data
+                    )
                     
-                return "Не удалось получить ответ от нейросети."
-                
-        except Exception as e:
-            raise Exception(f"Ошибка взаимодействия с GigaChat API: {str(e)}")
+                    response.raise_for_status()
+                    response_data = response.json()
+                    
+                    # Извлекаем текст ответа
+                    if response_data.get("choices") and len(response_data["choices"]) > 0:
+                        message = response_data["choices"][0].get("message", {})
+                        return message.get("content", "").strip()
+                        
+                    return "Не удалось получить ответ от ассистента."
+                    
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401 and attempt < max_attempts:
+                    # Если токен истек, принудительно обновляем его и повторяем запрос
+                    logger.warning("Получена ошибка авторизации 401. Принудительное обновление токена...")
+                    await token_manager.refresh_token()
+                    continue
+                else:
+                    logger.error(f"HTTP ошибка при запросе к API: {e.response.status_code} {e.response.text}")
+                    raise Exception(f"Ошибка взаимодействия с GigaChat API: {str(e)}")
+            except Exception as e:
+                logger.error(f"Неожиданная ошибка при запросе к API: {str(e)}")
+                raise Exception(f"Ошибка взаимодействия с GigaChat API: {str(e)}")
+        
+        # Если мы дошли до этой точки, значит все попытки исчерпаны
+        raise Exception("Превышено максимальное количество попыток запроса к GigaChat API")
 
 # Глобальный экземпляр сервиса
 gigachat_service = GigaChatService() 

@@ -5,9 +5,14 @@ import uvicorn
 import warnings
 import ssl
 import traceback
+import time
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+import asyncio
 
 from app.config import api_config
 from app.routers import text_enhancer, assistant
+from app.utils.auth import token_manager
 
 # Отключаем предупреждения SSL
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -31,6 +36,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Создаем планировщик
+scheduler = AsyncIOScheduler()
+
+# Функция для обновления токена
+async def refresh_token_job():
+    """Задача для планировщика по обновлению токена"""
+    try:
+        await token_manager.refresh_token()
+        print(f"[Планировщик] Токен успешно обновлен в {time.strftime('%H:%M:%S')}")
+    except Exception as e:
+        print(f"[Планировщик] Ошибка обновления токена: {str(e)}")
+
 # Регистрируем роутеры
 app.include_router(text_enhancer.router)
 app.include_router(assistant.router)
@@ -51,23 +68,54 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def root():
     """Корневой эндпоинт с информацией о сервисе"""
     return {
-        "name": api_config.title,
+        "service": api_config.title,
         "version": api_config.version,
         "description": api_config.description,
-        "documentation": "/docs"
+        "status": "running"
     }
 
 # Эндпоинт проверки работоспособности
 @app.get("/health")
 async def health_check():
-    """Эндпоинт проверки работоспособности API"""
-    return {"status": "ok"}
+    """Проверка работоспособности сервиса"""
+    token_status = "active" if token_manager.access_token and token_manager.token_expires_at > time.time() else "expired"
+    return {
+        "status": "ok",
+        "token_status": token_status,
+        "expires_in": int(token_manager.token_expires_at - time.time()) if token_manager.token_expires_at else None,
+        "scheduler": "running" if scheduler.running else "stopped"
+    }
+
+@app.on_event("startup")
+async def startup_event():
+    """Действия при запуске приложения"""
+    # Добавляем задачу обновления токена каждую минуту
+    scheduler.add_job(
+        refresh_token_job,
+        IntervalTrigger(minutes=1),
+        id="refresh_token_job",
+        replace_existing=True
+    )
+    # Запускаем планировщик
+    scheduler.start()
+    print("Запущен планировщик обновления токена (каждую минуту)")
+    
+    # Получаем первоначальный токен
+    await token_manager.refresh_token()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Действия при остановке приложения"""
+    # Останавливаем планировщик
+    if scheduler.running:
+        scheduler.shutdown()
+        print("Планировщик обновления токена остановлен")
 
 # Запуск приложения
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
-        host=api_config.host,
-        port=api_config.port,
-        reload=api_config.debug
+        host="0.0.0.0",
+        port=8000,
+        reload=True
     ) 
